@@ -1,0 +1,13 @@
+{
+  "cmake.generator": "Ninja",
+  "cmake.configureArgs": [
+    "-DCMAKE_MAKE_PROGRAM=${userHome}/.pico-sdk/ninja/v1.13.2/ninja.exe"
+  ],
+  "cmake.buildDirectory": "${workspaceFolder}/build",
+  "cmake.defaultVariants": {
+    "buildType": { "default": "debug", "choices": { "debug": { "short": "Debug", "buildType": "Debug" } } }
+  },
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "files.exclude": { "build": false }
+}
