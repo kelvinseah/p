@@ -303,21 +303,32 @@ static bool read(Sample &s)
 static bool g_stopped = false;
 static int g_closed_count = 0;
 
-static void reedInit()
+static void reedInit(void)
 {
     gpio_init(kReedPin);
     gpio_set_dir(kReedPin, GPIO_IN);
     gpio_pull_up(kReedPin);             /* enable internal pull-up */
+    printf("[REED] Ready on GP%d (open=%d)\n", kReedPin, gpio_get(kReedPin));
 }
 
 /** Call about every 10 ms. Stops after 3 closed readings in a row (~30 ms). */
-static void reedPoll()
+static void reedPoll(void)
 {
     if (!gpio_get(kReedPin)) {          /* 0 = closed (magnet) */
-        if (++g_closed_count >= 3) {
+        g_closed_count++;
+
+        if (g_closed_count == 1) {
+            printf("[REED] Magnet detected...\n");
+        }
+        if (g_closed_count == 3) {      /* == so it only prints once */
             g_stopped = true;
+            printf("[REED] Magnet CONFIRMED -> STOP\n");
         }
     } else {
+        if (g_closed_count > 0 && !g_stopped) {
+            printf("[REED] Magnet lost (only %d readings, ignored)\n",
+                   g_closed_count);
+        }
         g_closed_count = 0;
     }
 }
