@@ -13,7 +13,8 @@
  *   Servo        VSYS (pin 39), GND (pin 33), SIG pin 34 = GP28
  *   IMU          3V3 OUT (pin 36), GND (pin 28),
  *                SDA pin 29 = GP22, SCL pin 27 = GP21
- *   Reed switch  3V3 OUT (pin 36), GND (pin 23), SIG pin 21 = GP16
+ *   Reed switch  SIG pin 21 = GP16; other leg to 3V3 (pin 36) or GND
+ *                (pin 23) -- set kReedToGnd below to match
  *
  * ---------------------------------------------------------------------------
  * What it does
@@ -62,6 +63,13 @@ static constexpr uint kServoPin = 28;   /* pin 34 */
 static constexpr uint kReedPin  = 16;   /* pin 21, 0 = magnet present */
 static constexpr uint kImuSda   = 22;   /* pin 29 */
 static constexpr uint kImuScl   = 21;   /* pin 27 */
+
+/** How the reed switch is wired -- the code must match, or it never triggers.
+ *  true : switch between GP16 and GND (pin 23). Pull-up; reads 0 with magnet.
+ *  false: switch between GP16 and 3V3 (pin 36). Pull-down; reads 1 with magnet.
+ *  (A 3-pin reed MODULE with its own SIG output: try true first; if the
+ *  "[REED] pin=" line shows the opposite of what you expect, flip it.) */
+static constexpr bool kReedToGnd = false;
 
 /** Buzzer GPIO, or -1 for none. Never 21 or 22: those are the IMU bus.
  *  A piezo on GP15 (pin 20) works: set this to 15. */
@@ -303,18 +311,32 @@ static bool read(Sample &s)
 static bool g_stopped = false;
 static int g_closed_count = 0;
 
+/** true while the magnet holds the switch closed (handles both wirings). */
+static bool reedClosed(void)
+{
+    const bool level = gpio_get(kReedPin);
+    return kReedToGnd ? !level : level;
+}
+
 static void reedInit(void)
 {
     gpio_init(kReedPin);
     gpio_set_dir(kReedPin, GPIO_IN);
-    gpio_pull_up(kReedPin);             /* enable internal pull-up */
-    printf("[REED] Ready on GP%d (open=%d)\n", kReedPin, gpio_get(kReedPin));
+    if (kReedToGnd) {
+        gpio_pull_up(kReedPin);         /* switch to GND: idle 1, magnet 0 */
+    } else {
+        gpio_pull_down(kReedPin);       /* switch to 3V3: idle 0, magnet 1 */
+    }
+    sleep_ms(1);                        /* let the pull settle */
+    printf("[REED] Ready on GP%u, wired to %s, pin=%d -> %s\n", kReedPin,
+           kReedToGnd ? "GND" : "3V3", gpio_get(kReedPin),
+           reedClosed() ? "CLOSED (magnet)" : "open");
 }
 
 /** Call about every 10 ms. Stops after 3 closed readings in a row (~30 ms). */
 static void reedPoll(void)
 {
-    if (!gpio_get(kReedPin)) {          /* 0 = closed (magnet) */
+    if (reedClosed()) {                 /* magnet present */
         g_closed_count++;
 
         if (g_closed_count == 1) {
@@ -467,7 +489,21 @@ int main()
         std::printf("# Done - holding at %.0f\n", kRestAngle);
     }
 
-    while (true) {                      /* hold the servo position */
-        sleep_ms(1000);
+    /* Hold the servo position, and keep watching the reed switch so you can
+     * still test it after the shots: every change is printed. */
+    bool last = reedClosed();
+    printf("[REED] now %s -- bring the magnet close to test\n",
+           last ? "CLOSED (magnet)" : "open");
+    while (true) {
+        const bool now = reedClosed();
+        if (now != last) {
+            sleep_ms(20);                       /* debounce */
+            if (reedClosed() == now) {
+                last = now;
+                printf("[REED] pin=%d -> %s\n", gpio_get(kReedPin),
+                       now ? "CLOSED (magnet)" : "open");
+            }
+        }
+        sleep_ms(10);
     }
 }
