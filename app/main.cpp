@@ -15,6 +15,7 @@
  *                SDA pin 29 = GP22, SCL pin 27 = GP21
  *   Reed switch  SIG pin 21 = GP16; other leg to 3V3 (pin 36) or GND
  *                (pin 23) -- set kReedToGnd below to match
+ *   Buzzer       + to pin 24 = GP18, - to GND (pin 23)
  *
  * ---------------------------------------------------------------------------
  * What it does
@@ -71,9 +72,13 @@ static constexpr uint kImuScl   = 21;   /* pin 27 */
  *  "[REED] pin=" line shows the opposite of what you expect, flip it.) */
 static constexpr bool kReedToGnd = false;
 
-/** Buzzer GPIO, or -1 for none. Never 21 or 22: those are the IMU bus.
- *  A piezo on GP15 (pin 20) works: set this to 15. */
-static constexpr int kBuzzerPin = -1;
+/** Buzzer GPIO, or -1 for none.
+ *  Wire the buzzer + to GP18 (pin 24) and - to GND (pin 23).
+ *  Never 21 or 22: those are the IMU bus (shot sounds are skipped there). */
+static constexpr int kBuzzerPin = 18;
+
+/** Power-on beep: two short rising tones. Set to false to turn it off. */
+static constexpr bool kStartupBeep = true;
 
 /** Servo angles to move to, one "shot" each, in order. */
 static constexpr float kShotAngles[] = { 90.0f, 0.0f };
@@ -377,10 +382,32 @@ static int randomRange(int lo, int hi)
 }
 
 /** One step of the gunshot at t ms into it: noisy crack, falling pitch, fade. */
+/** true if the buzzer shares a pin with the IMU bus (Robo Pico GP22). */
+static constexpr bool kBuzzerOnImuBus =
+    kBuzzerPin == static_cast<int>(kImuSda) ||
+    kBuzzerPin == static_cast<int>(kImuScl);
+
+/** Power-on beep: two short rising tones. Runs before sw_i2c::init(), so it
+ *  is safe even if the buzzer is ever moved onto an IMU pin. */
+static void startupBeep(void)
+{
+    if (!kStartupBeep || kBuzzerPin < 0) {
+        return;
+    }
+    const uint pin = static_cast<uint>(kBuzzerPin);
+    tone_play(pin, 1000.0f, 0.5f);
+    sleep_ms(120);
+    tone_stop(pin);
+    sleep_ms(60);
+    tone_play(pin, 1600.0f, 0.5f);
+    sleep_ms(180);
+    tone_stop(pin);
+}
+
 static void shotSoundStep(uint32_t t)
 {
-    if (kBuzzerPin < 0) {
-        return;
+    if (kBuzzerPin < 0 || kBuzzerOnImuBus) {
+        return;             /* no buzzer, or its pin is busy as IMU SDA/SCL */
     }
     const uint pin = static_cast<uint>(kBuzzerPin);
     if (t >= kShotSoundMs) {
@@ -440,7 +467,7 @@ static void shot(int n, float angle, bool have_imu)
         next = delayed_by_ms(next, 1);
         sleep_until(next);
     }
-    if (kBuzzerPin >= 0) {
+    if (kBuzzerPin >= 0 && !kBuzzerOnImuBus) {
         tone_stop(static_cast<uint>(kBuzzerPin));
     }
 }
@@ -450,10 +477,11 @@ static void shot(int n, float angle, bool have_imu)
 int main()
 {
     stdio_init_all();
+    startupBeep();                      /* right at power-on, before the IMU */
     sleep_ms(2000);                     /* time to open the Serial Monitor */
 
     reedInit();
-    sw_i2c::init();
+    sw_i2c::init();                     /* GP22 becomes IMU SDA from here on */
     const bool have_imu = imu::begin();
 
     std::printf("# projectile: servo GP%u, reed GP%u, IMU SDA GP%u SCL GP%u\n",
@@ -463,6 +491,10 @@ int main()
     } else {
         std::printf("# IMU NOT found -- check SDA pin 29, SCL pin 27, 3V3, GND."
                     " Shots still run, without data.\n");
+    }
+    if (kBuzzerOnImuBus) {
+        std::printf("# Buzzer on GP%d shares the IMU bus: power-on beep only\n",
+                    kBuzzerPin);
     }
 
     servo_init(kServoPin);
